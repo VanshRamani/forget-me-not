@@ -8,3 +8,7 @@ env/
 .venv/
 .ipynb_checkpoints/
 .DS_Store
+figs/
+*.png
+*.jpg
+*.jpeg

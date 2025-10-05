@@ -78,7 +78,9 @@ metrics = unlearner.evaluate(P_ideal, X_forget)
 # Returns: {'epsilon': ..., 'lambda': ..., 'satisfies_pac': ...}
 ```
 
-### 3. PAC Metrics
+### 3. Unlearning Metrics
+
+#### PAC Framework Metrics
 
 **ε-Matching Condition (ε-MC):** Measures utility
 - `d_TV(Q, P₀) ≤ ε` - Output Q is close to ideal distribution P₀
@@ -87,6 +89,21 @@ metrics = unlearner.evaluate(P_ideal, X_forget)
 - `Q(X₁) ≤ λ` - Low probability mass in forget region
 
 **Key Theorem:** ε-MC implies λ-UC with λ = ε
+
+#### Additional Standard Unlearning Metrics
+
+The framework also computes commonly used distribution distance metrics:
+
+**Information-Theoretic:**
+- **KL Divergence** `D_KL(P₀||Q)` - Asymmetric measure of how P₀ diverges from Q
+- **JS Divergence** - Symmetric version of KL, bounded in [0, log(2)] ≈ [0, 0.693]
+
+**Geometric Distances:**
+- **Hellinger Distance** - Symmetric, bounded in [0, 1]
+- **Wasserstein Distance (W₁)** - Earth Mover's Distance (sliced for multivariate)
+- **Chi-Squared Distance** - Weighted difference measure
+
+All metrics are computed automatically during evaluation and can be used to comprehensively assess unlearning quality.
 
 ## Installation
 

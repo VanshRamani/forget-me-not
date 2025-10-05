@@ -10,6 +10,7 @@ This script demonstrates the complete workflow:
 
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 from src.synthetic import (
     generate_moon_dataset, generate_blobs_dataset,
     TargetConcept, partition_data, visualize_dataset
@@ -20,9 +21,12 @@ from src.bayesian import (
     total_variation_distance
 )
 
+# Ensure output directory exists
+os.makedirs('./figs', exist_ok=True)
+
 
 def visualize_distributions(X_retain, X_forget, Q_unlearned, P_ideal, 
-                           title="Unlearning Results", save_path=None):
+                           title="Unlearning Results", save_path="./figs/"):
     """Visualize the unlearning results."""
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
     
@@ -67,8 +71,9 @@ def visualize_distributions(X_retain, X_forget, Q_unlearned, P_ideal,
     plt.tight_layout()
     
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-    plt.show()
+        path = save_path + title + ".png"
+        plt.savefig(path, dpi=150, bbox_inches='tight')
+    plt.close()
 
 
 def run_unlearning_experiment(dataset_name='moons', concept_type='spatial',
@@ -135,18 +140,26 @@ def run_unlearning_experiment(dataset_name='moons', concept_type='spatial',
     Q_unlearned = unlearner.get_posterior_predictive()
     print(f"  Posterior predictive has {Q_unlearned.n_components} components")
     
-    # Step 5: Evaluate PAC metrics
-    print("\n[Step 5] Evaluating PAC metrics...")
-    metrics = unlearner.evaluate(P_ideal, X_forget, n_samples=5000)
+    # Step 5: Evaluate PAC metrics and standard unlearning metrics
+    print("\n[Step 5] Evaluating unlearning metrics...")
+    metrics = unlearner.evaluate(P_ideal, X_forget, n_samples=5000, compute_all_metrics=True)
     
     print(f"\n{'=' * 80}")
     print("RESULTS:")
     print(f"{'=' * 80}")
+    print("\n📊 PAC Framework Metrics:")
     print(f"  ε (TV distance to P₀):      {metrics['epsilon']:.4f}")
     print(f"  λ (forget region mass):      {metrics['lambda']:.4f}")
     print(f"  Satisfies ε-MC (ε ≤ 0.5):    {metrics['epsilon'] <= 0.5}")
     print(f"  Satisfies λ-UC (λ ≤ ε):      {metrics['lambda'] <= metrics['epsilon']}")
-    print(f"  Overall PAC condition:       {metrics['satisfies_pac']}")
+    print(f"  Overall PAC condition:       {'✓ PASS' if metrics['satisfies_pac'] else '✗ FAIL'}")
+    
+    print("\n📏 Additional Distance Metrics:")
+    print(f"  KL Divergence D_KL(P₀||Q):   {metrics.get('kl_divergence', 'N/A'):.4f}")
+    print(f"  JS Divergence (symmetric):   {metrics.get('js_divergence', 'N/A'):.4f} (max: 0.693)")
+    print(f"  Hellinger Distance:          {metrics.get('hellinger', 'N/A'):.4f} (max: 1.0)")
+    print(f"  Wasserstein Distance (W₁):   {metrics.get('wasserstein', 'N/A'):.4f}")
+    print(f"  Chi-Squared Distance:        {metrics.get('chi_squared', 'N/A'):.4f}")
     print(f"{'=' * 80}\n")
     
     # Step 6: Visualize
@@ -183,42 +196,71 @@ def compare_lambda_hyper_values():
                                           n_posterior_samples=40)
         results.append(result)
     
-    # Plot comparison
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-    
+    # Extract metrics
     epsilons = [r['metrics']['epsilon'] for r in results]
     lambdas = [r['metrics']['lambda'] for r in results]
+    kl_divs = [r['metrics'].get('kl_divergence', 0) for r in results]
+    js_divs = [r['metrics'].get('js_divergence', 0) for r in results]
+    hellinger_dists = [r['metrics'].get('hellinger', 0) for r in results]
+    wasserstein_dists = [r['metrics'].get('wasserstein', 0) for r in results]
     
-    axes[0].plot(lambda_values, epsilons, 'o-', linewidth=2, markersize=8, label='ε (TV distance)')
-    axes[0].axhline(y=0.5, color='r', linestyle='--', label='ε threshold (0.5)')
-    axes[0].set_xlabel('λ_hyper (Forgetting Strength)', fontsize=12)
-    axes[0].set_ylabel('ε (Matching Condition)', fontsize=12)
-    axes[0].set_title('Utility vs Forgetting Strength', fontsize=13, fontweight='bold')
-    axes[0].legend()
-    axes[0].grid(True, alpha=0.3)
+    # Plot comparison
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
     
-    axes[1].plot(lambda_values, lambdas, 's-', linewidth=2, markersize=8, 
-                color='orange', label='λ (forget mass)')
-    axes[1].plot(lambda_values, epsilons, 'o--', linewidth=2, markersize=8, 
-                alpha=0.5, label='ε (upper bound)', color='blue')
-    axes[1].set_xlabel('λ_hyper (Forgetting Strength)', fontsize=12)
-    axes[1].set_ylabel('λ (Unlearning Condition)', fontsize=12)
-    axes[1].set_title('Forgetting Quality vs Strength', fontsize=13, fontweight='bold')
-    axes[1].legend()
-    axes[1].grid(True, alpha=0.3)
+    # Plot 1: PAC ε-MC
+    axes[0, 0].plot(lambda_values, epsilons, 'o-', linewidth=2, markersize=8, label='ε (TV distance)', color='blue')
+    axes[0, 0].axhline(y=0.5, color='r', linestyle='--', label='ε threshold (0.5)', linewidth=1.5)
+    axes[0, 0].set_xlabel('λ_hyper (Forgetting Strength)', fontsize=11)
+    axes[0, 0].set_ylabel('ε (Matching Condition)', fontsize=11)
+    axes[0, 0].set_title('PAC ε-MC: Utility vs Forgetting Strength', fontsize=12, fontweight='bold')
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+    
+    # Plot 2: PAC λ-UC
+    axes[0, 1].plot(lambda_values, lambdas, 's-', linewidth=2, markersize=8, 
+                    color='orange', label='λ (forget mass)')
+    axes[0, 1].plot(lambda_values, epsilons, 'o--', linewidth=2, markersize=8, 
+                    alpha=0.5, label='ε (upper bound)', color='blue')
+    axes[0, 1].set_xlabel('λ_hyper (Forgetting Strength)', fontsize=11)
+    axes[0, 1].set_ylabel('λ (Unlearning Condition)', fontsize=11)
+    axes[0, 1].set_title('PAC λ-UC: Forgetting Quality vs Strength', fontsize=12, fontweight='bold')
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # Plot 3: Divergence Metrics
+    axes[1, 0].plot(lambda_values, kl_divs, '^-', linewidth=2, markersize=8, 
+                    label='KL Divergence', color='green')
+    axes[1, 0].plot(lambda_values, js_divs, 'v-', linewidth=2, markersize=8, 
+                    label='JS Divergence', color='purple')
+    axes[1, 0].set_xlabel('λ_hyper (Forgetting Strength)', fontsize=11)
+    axes[1, 0].set_ylabel('Divergence (nats)', fontsize=11)
+    axes[1, 0].set_title('Information-Theoretic Metrics', fontsize=12, fontweight='bold')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # Plot 4: Distance Metrics
+    axes[1, 1].plot(lambda_values, hellinger_dists, 'd-', linewidth=2, markersize=8, 
+                    label='Hellinger', color='red')
+    axes[1, 1].plot(lambda_values, wasserstein_dists, 'p-', linewidth=2, markersize=8, 
+                    label='Wasserstein-1', color='brown')
+    axes[1, 1].set_xlabel('λ_hyper (Forgetting Strength)', fontsize=11)
+    axes[1, 1].set_ylabel('Distance', fontsize=11)
+    axes[1, 1].set_title('Geometric Distance Metrics', fontsize=12, fontweight='bold')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
     
     plt.tight_layout()
-    plt.savefig('lambda_comparison.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    plt.savefig('./figs/lambda_comparison_all_metrics.png', dpi=150, bbox_inches='tight')
+    plt.close()
     
     print("\n" + "=" * 80)
-    print("SUMMARY TABLE")
+    print("SUMMARY TABLE: PAC METRICS")
     print("=" * 80)
-    print(f"{'λ_hyper':<12} {'ε (TV)':<12} {'λ (forget)':<12} {'λ ≤ ε?':<12}")
+    print(f"{'λ_hyper':<10} {'ε (TV)':<10} {'λ (forget)':<12} {'KL-Div':<10} {'JS-Div':<10} {'λ≤ε?':<8}")
     print("-" * 80)
-    for lh, eps, lam in zip(lambda_values, epsilons, lambdas):
+    for lh, eps, lam, kl, js in zip(lambda_values, epsilons, lambdas, kl_divs, js_divs):
         satisfies = "✓" if lam <= eps else "✗"
-        print(f"{lh:<12.1f} {eps:<12.4f} {lam:<12.4f} {satisfies:<12}")
+        print(f"{lh:<10.1f} {eps:<10.4f} {lam:<12.4f} {kl:<10.4f} {js:<10.4f} {satisfies:<8}")
     print("=" * 80 + "\n")
 
 

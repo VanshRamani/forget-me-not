@@ -322,6 +322,196 @@ def total_variation_distance(P: Distribution, Q: Distribution,
     return tv_distance
 
 
+def kl_divergence(P: Distribution, Q: Distribution,
+                 n_samples: int = 10000,
+                 random_state: Optional[int] = 42) -> float:
+    """
+    Estimate KL divergence: D_KL(P || Q) = E_P[log(P(x) / Q(x))]
+    
+    Measures how P diverges from Q (asymmetric).
+    
+    Args:
+        P: Reference distribution
+        Q: Approximating distribution
+        n_samples: Number of samples for Monte Carlo estimation
+        random_state: Random seed
+    
+    Returns:
+        Estimated KL divergence (in nats)
+    """
+    # Sample from P
+    samples = P.sample(n_samples, random_state=random_state)
+    
+    # Compute densities
+    p_vals = P.pdf(samples)
+    q_vals = Q.pdf(samples)
+    
+    # Avoid numerical issues
+    p_vals = np.maximum(p_vals, 1e-300)
+    q_vals = np.maximum(q_vals, 1e-300)
+    
+    # KL divergence: E[log(P/Q)]
+    kl_div = np.mean(np.log(p_vals) - np.log(q_vals))
+    
+    return max(0.0, kl_div)  # KL is non-negative
+
+
+def js_divergence(P: Distribution, Q: Distribution,
+                 n_samples: int = 10000,
+                 random_state: Optional[int] = 42) -> float:
+    """
+    Estimate Jensen-Shannon divergence: JS(P, Q) = 0.5 * [KL(P||M) + KL(Q||M)]
+    where M = 0.5 * (P + Q)
+    
+    Symmetric measure bounded in [0, log(2)] ≈ [0, 0.693].
+    
+    Args:
+        P, Q: Two distributions
+        n_samples: Number of samples for estimation
+        random_state: Random seed
+    
+    Returns:
+        Estimated JS divergence (in nats)
+    """
+    rng = np.random.RandomState(random_state)
+    
+    # Sample from both distributions
+    samples_P = P.sample(n_samples // 2, random_state=rng.randint(0, 10000))
+    samples_Q = Q.sample(n_samples // 2, random_state=rng.randint(0, 10000))
+    all_samples = np.vstack([samples_P, samples_Q])
+    
+    # Compute densities
+    p_vals = P.pdf(all_samples)
+    q_vals = Q.pdf(all_samples)
+    m_vals = 0.5 * (p_vals + q_vals)
+    
+    # Avoid numerical issues
+    p_vals = np.maximum(p_vals, 1e-300)
+    q_vals = np.maximum(q_vals, 1e-300)
+    m_vals = np.maximum(m_vals, 1e-300)
+    
+    # JS divergence
+    js_div = 0.5 * (np.mean(np.log(p_vals) - np.log(m_vals)) + 
+                    np.mean(np.log(q_vals) - np.log(m_vals)))
+    
+    return max(0.0, js_div)
+
+
+def hellinger_distance(P: Distribution, Q: Distribution,
+                      n_samples: int = 10000,
+                      random_state: Optional[int] = 42) -> float:
+    """
+    Estimate Hellinger distance: H(P, Q) = sqrt(1 - ∫sqrt(P(x)Q(x))dx)
+    
+    Symmetric measure bounded in [0, 1].
+    
+    Args:
+        P, Q: Two distributions
+        n_samples: Number of samples for estimation
+        random_state: Random seed
+    
+    Returns:
+        Estimated Hellinger distance
+    """
+    rng = np.random.RandomState(random_state)
+    
+    # Sample from both distributions
+    samples_P = P.sample(n_samples // 2, random_state=rng.randint(0, 10000))
+    samples_Q = Q.sample(n_samples // 2, random_state=rng.randint(0, 10000))
+    all_samples = np.vstack([samples_P, samples_Q])
+    
+    # Compute densities
+    p_vals = P.pdf(all_samples)
+    q_vals = Q.pdf(all_samples)
+    
+    # Hellinger distance
+    bc_coefficient = np.mean(np.sqrt(p_vals * q_vals))  # Bhattacharyya coefficient
+    hellinger = np.sqrt(max(0.0, 1.0 - bc_coefficient))
+    
+    return hellinger
+
+
+def wasserstein_distance(P: Distribution, Q: Distribution,
+                        n_samples: int = 5000,
+                        random_state: Optional[int] = 42) -> float:
+    """
+    Estimate 1-Wasserstein (Earth Mover's) distance using samples.
+    
+    W_1(P, Q) = inf E[||X - Y||] over all couplings of P and Q.
+    Approximated using sample-based optimal transport.
+    
+    Args:
+        P, Q: Two distributions
+        n_samples: Number of samples (smaller due to O(n²) complexity)
+        random_state: Random seed
+    
+    Returns:
+        Estimated Wasserstein-1 distance
+    """
+    from scipy.stats import wasserstein_distance as wd_1d
+    
+    # Sample from both
+    samples_P = P.sample(n_samples, random_state=random_state)
+    samples_Q = Q.sample(n_samples, random_state=random_state + 1)
+    
+    # For multivariate case, use average over dimensions (approximation)
+    # Better: use POT library, but avoiding extra dependency
+    if samples_P.shape[1] == 1:
+        return wd_1d(samples_P.flatten(), samples_Q.flatten())
+    else:
+        # Sliced Wasserstein: average over random projections
+        n_projections = 50
+        rng = np.random.RandomState(random_state)
+        distances = []
+        
+        for _ in range(n_projections):
+            # Random unit vector
+            direction = rng.randn(samples_P.shape[1])
+            direction = direction / np.linalg.norm(direction)
+            
+            # Project samples
+            proj_P = samples_P @ direction
+            proj_Q = samples_Q @ direction
+            
+            # 1D Wasserstein
+            distances.append(wd_1d(proj_P, proj_Q))
+        
+        return np.mean(distances)
+
+
+def chi_squared_distance(P: Distribution, Q: Distribution,
+                        n_samples: int = 10000,
+                        random_state: Optional[int] = 42) -> float:
+    """
+    Estimate Chi-squared distance: χ²(P, Q) = ∫(P(x) - Q(x))² / Q(x) dx
+    
+    Asymmetric measure (use Q as reference).
+    
+    Args:
+        P, Q: Two distributions
+        n_samples: Number of samples for estimation
+        random_state: Random seed
+    
+    Returns:
+        Estimated χ² distance
+    """
+    # Sample from mixture of P and Q
+    rng = np.random.RandomState(random_state)
+    samples_P = P.sample(n_samples // 2, random_state=rng.randint(0, 10000))
+    samples_Q = Q.sample(n_samples // 2, random_state=rng.randint(0, 10000))
+    all_samples = np.vstack([samples_P, samples_Q])
+    
+    # Compute densities
+    p_vals = P.pdf(all_samples)
+    q_vals = Q.pdf(all_samples)
+    q_vals = np.maximum(q_vals, 1e-300)  # Avoid division by zero
+    
+    # χ² distance
+    chi2 = np.mean((p_vals - q_vals)**2 / q_vals)
+    
+    return max(0.0, chi2)
+
+
 def unlearning_condition(Q: Distribution, forget_region_data: np.ndarray,
                         n_samples: int = 10000, random_state: Optional[int] = 42) -> float:
     """
@@ -459,31 +649,59 @@ class BayesianUnlearning:
         return GaussianMixtureDistribution(all_weights, components)
     
     def evaluate(self, P_ideal: Distribution, forget_region_data: np.ndarray,
-                n_samples: int = 10000) -> Dict[str, float]:
+                n_samples: int = 10000, compute_all_metrics: bool = True) -> Dict[str, float]:
         """
-        Evaluate the unlearned model using PAC metrics.
+        Evaluate the unlearned model using PAC metrics and standard unlearning metrics.
         
         Args:
             P_ideal: Ideal retain distribution P₀
             forget_region_data: Samples from forget region
             n_samples: Number of samples for metric computation
+            compute_all_metrics: If True, compute additional distance metrics beyond ε and λ
         
         Returns:
-            Dictionary with ε (TV distance) and λ (forget mass)
+            Dictionary with metrics:
+                - epsilon: TV distance (PAC ε-MC)
+                - lambda: Forget region mass (PAC λ-UC)
+                - satisfies_pac: Boolean indicating PAC conditions
+                - kl_divergence: KL(P₀ || Q)
+                - js_divergence: Jensen-Shannon divergence
+                - hellinger: Hellinger distance
+                - wasserstein: Wasserstein-1 distance
+                - chi_squared: Chi-squared distance
         """
         Q = self.get_posterior_predictive()
         
-        # Compute ε-MC (Total Variation distance)
+        # Core PAC metrics
         epsilon = total_variation_distance(Q, P_ideal, n_samples=n_samples)
-        
-        # Compute λ-UC (Forget region probability)
         lambda_uc = unlearning_condition(Q, forget_region_data, n_samples=n_samples)
         
-        return {
+        results = {
             'epsilon': epsilon,
             'lambda': lambda_uc,
             'satisfies_pac': epsilon <= 0.5 and lambda_uc <= epsilon
         }
+        
+        # Additional standard unlearning metrics
+        if compute_all_metrics:
+            print("  Computing additional distance metrics...")
+            
+            # KL divergence (asymmetric: how P_ideal differs from Q)
+            results['kl_divergence'] = kl_divergence(P_ideal, Q, n_samples=n_samples)
+            
+            # JS divergence (symmetric)
+            results['js_divergence'] = js_divergence(P_ideal, Q, n_samples=n_samples)
+            
+            # Hellinger distance (symmetric, bounded [0,1])
+            results['hellinger'] = hellinger_distance(P_ideal, Q, n_samples=n_samples)
+            
+            # Wasserstein distance (Earth Mover's Distance)
+            results['wasserstein'] = wasserstein_distance(P_ideal, Q, n_samples=min(5000, n_samples))
+            
+            # Chi-squared distance
+            results['chi_squared'] = chi_squared_distance(P_ideal, Q, n_samples=n_samples)
+        
+        return results
 
 
 # ==================== Utility Functions ====================
@@ -527,5 +745,15 @@ if __name__ == "__main__":
     print("  - Distributions: GaussianMixtureDistribution, KDEDistribution")
     print("  - Likelihoods: RetainLikelihood, ForgetLikelihood")
     print("  - Main class: BayesianUnlearning")
-    print("  - Metrics: total_variation_distance, unlearning_condition")
-    print("\nSee demo script for usage examples.")
+    print("\nMetrics:")
+    print("  PAC Framework:")
+    print("    - total_variation_distance (ε-MC)")
+    print("    - unlearning_condition (λ-UC)")
+    print("  Information-Theoretic:")
+    print("    - kl_divergence")
+    print("    - js_divergence")
+    print("  Geometric:")
+    print("    - hellinger_distance")
+    print("    - wasserstein_distance")
+    print("    - chi_squared_distance")
+    print("\nSee demo.py for usage examples.")
