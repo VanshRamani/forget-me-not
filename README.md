@@ -78,7 +78,44 @@ metrics = unlearner.evaluate(P_ideal, X_forget)
 # Returns: {'epsilon': ..., 'lambda': ..., 'satisfies_pac': ...}
 ```
 
-### 3. Unlearning Metrics
+### 3. Baseline Methods (`src/baselines.py`)
+
+Compare Bayesian unlearning against standard baselines:
+
+#### Available Baselines
+
+**Exact Unlearning (Gold Standard)**
+- Train only on retain data, never seeing forget data
+- Represents the ideal unlearning result (P₀)
+- Used as reference for measuring utility
+
+**Original Model (No Unlearning)**
+- Train on all data (retain + forget)
+- Worst-case scenario where unlearning completely fails
+- Used as reference for measuring forgetting effectiveness
+
+**Naive Fine-tuning**
+- Train on all data, then fine-tune on retain data only
+- Simple baseline that may not fully remove forget data influence
+- Adjustable fine-tuning strength
+
+**Random Model**
+- Random baseline for sanity checks
+- Should perform worse than all other methods
+
+#### Usage
+
+```python
+from src.baselines import evaluate_baselines, compare_with_baselines
+
+# Evaluate all baselines
+baseline_results, P_ideal = evaluate_baselines(X_retain, X_forget)
+
+# Compare Bayesian unlearning with baselines
+compare_with_baselines(bayesian_metrics, baseline_results)
+```
+
+### 4. Unlearning Metrics
 
 #### PAC Framework Metrics
 
@@ -119,18 +156,25 @@ pip install numpy scipy scikit-learn matplotlib
 
 ### Quick Start
 
-Run the demo script:
+Run the demo script with different modes:
 
 ```bash
+# Default: Single experiment with baseline comparison
 python demo.py
+
+# Comprehensive baseline comparison
+python demo.py --baselines
+
+# Compare different λ_hyper values
+python demo.py --lambda-sweep
 ```
 
-This will:
+The default mode will:
 1. Generate synthetic dataset with forget/retain regions
 2. Fit ideal retain distribution P₀
-3. Perform Bayesian unlearning with different λ_hyper values
-4. Evaluate PAC metrics (ε and λ)
-5. Visualize results
+3. Perform Bayesian unlearning
+4. Evaluate against baseline methods
+5. Compute all metrics and visualize results
 
 ### Custom Experiment
 
@@ -227,9 +271,11 @@ Output: Q_Bayes(x) = 𝔼[P(x) | D₀, D₁]
 ```
 PAC-Bayesian/
 ├── src/
-│   ├── synthetic.py      # Dataset generation
-│   └── bayesian.py       # Bayesian unlearning framework
+│   ├── synthetic.py      # Dataset generation & target concepts
+│   ├── bayesian.py       # Bayesian unlearning framework
+│   └── baselines.py      # Baseline unlearning methods
 ├── demo.py               # Demonstration script
+├── test_quick.py         # Quick test script
 ├── requirements.txt      # Dependencies
 ├── Framework.md          # Theoretical framework
 └── README.md            # This file
@@ -245,9 +291,20 @@ PAC-Bayesian/
 ## Examples
 
 See `demo.py` for:
-- Basic unlearning experiment
+- Basic unlearning experiment with baseline comparison
+- Comprehensive baseline evaluation
 - Comparison of different λ_hyper values
-- Visualization of results
+- Visualization of results and metrics
+
+Example output from baseline comparison:
+```
+Method                              ε (TV)     λ (forget)   KL-Div     JS-Div     PAC?
+-------------------------------------------------------------------------------------------------
+Exact Unlearning (Gold Standard)   0.0000     0.0000       0.0000     0.0000     ✓
+Original Model (No Unlearning)      0.3456     0.4523       0.5621     0.2341     ✗
+Naive Fine-tuning                   0.1823     0.2145       0.2134     0.1023     ✓
+Bayesian Unlearning (Ours)          0.1234     0.0567       0.1456     0.0678     ✓
+```
 
 ## License
 

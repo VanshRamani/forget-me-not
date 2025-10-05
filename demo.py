@@ -20,6 +20,10 @@ from src.bayesian import (
     fit_distribution_to_data, GaussianMixtureDistribution,
     total_variation_distance
 )
+from src.baselines import (
+    evaluate_baselines, compare_with_baselines,
+    ExactUnlearning, OriginalModel, NaiveFinetuning
+)
 
 # Ensure output directory exists
 os.makedirs('./figs', exist_ok=True)
@@ -77,15 +81,17 @@ def visualize_distributions(X_retain, X_forget, Q_unlearned, P_ideal,
 
 
 def run_unlearning_experiment(dataset_name='moons', concept_type='spatial',
-                              lambda_hyper=1.0, n_posterior_samples=50):
+                              lambda_hyper=1.0, n_posterior_samples=50,
+                              include_baselines=True):
     """
-    Run a complete unlearning experiment.
+    Run a complete unlearning experiment with baselines.
     
     Args:
         dataset_name: 'moons', 'blobs', or 'circles'
         concept_type: 'spatial', 'radial', or 'halfspace'
         lambda_hyper: Forgetting strength
         n_posterior_samples: Number of posterior samples
+        include_baselines: Whether to evaluate baseline methods
     """
     print("=" * 80)
     print(f"BAYESIAN PAC UNLEARNING EXPERIMENT")
@@ -162,8 +168,19 @@ def run_unlearning_experiment(dataset_name='moons', concept_type='spatial',
     print(f"  Chi-Squared Distance:        {metrics.get('chi_squared', 'N/A'):.4f}")
     print(f"{'=' * 80}\n")
     
-    # Step 6: Visualize
-    print("[Step 6] Visualizing results...")
+    # Step 6: Evaluate baselines
+    baseline_results = None
+    if include_baselines:
+        print("\n[Step 6] Evaluating baseline methods...")
+        baseline_results, P_ideal_baseline = evaluate_baselines(
+            X_retain, X_forget, method='gmm', n_components=5, n_samples=5000
+        )
+        
+        # Compare with baselines
+        compare_with_baselines(metrics, baseline_results)
+    
+    # Step 7: Visualize
+    print(f"\n[Step {7 if include_baselines else 6}] Visualizing results...")
     visualize_distributions(X_retain, X_forget, Q_unlearned, P_ideal,
                           title=f"Unlearning: {dataset_name} | λ_hyper={lambda_hyper}")
     
@@ -173,8 +190,61 @@ def run_unlearning_experiment(dataset_name='moons', concept_type='spatial',
         'P_ideal': P_ideal,
         'Q_unlearned': Q_unlearned,
         'metrics': metrics,
-        'unlearner': unlearner
+        'unlearner': unlearner,
+        'baseline_results': baseline_results
     }
+
+
+def run_baseline_comparison(dataset_name='moons', concept_type='spatial'):
+    """
+    Run a comprehensive comparison with all baselines.
+    
+    Args:
+        dataset_name: Dataset to use
+        concept_type: Concept type for forget region
+    """
+    print("\n" + "=" * 80)
+    print("COMPREHENSIVE BASELINE COMPARISON")
+    print("=" * 80 + "\n")
+    
+    # Generate dataset
+    if dataset_name == 'moons':
+        X, y = generate_moon_dataset(n_samples=800, noise=0.1)
+        if concept_type == 'spatial':
+            concept = TargetConcept.spatial_region(x_min=0.5, x_max=2.0, y_min=-0.3, y_max=0.7)
+        elif concept_type == 'radial':
+            concept = TargetConcept.radial(center=(1.0, 0.0), radius=0.7)
+        else:
+            concept = TargetConcept.halfspace(normal=np.array([1, 0]), offset=-0.5)
+    elif dataset_name == 'blobs':
+        X, y = generate_blobs_dataset(n_samples=800, n_centers=4, cluster_std=0.6)
+        concept = TargetConcept.spatial_region(x_min=0, x_max=5, y_min=-2, y_max=2)
+    
+    X_retain, X_forget, _ = partition_data(X, y, concept)
+    print(f"Dataset: {len(X_retain)} retain, {len(X_forget)} forget samples\n")
+    
+    # Evaluate baselines
+    baseline_results, P_ideal = evaluate_baselines(
+        X_retain, X_forget, method='gmm', n_components=5, n_samples=5000
+    )
+    
+    # Run Bayesian unlearning
+    print("\n" + "=" * 80)
+    print("BAYESIAN UNLEARNING")
+    print("=" * 80)
+    data_mean = X_retain.mean(axis=0)
+    data_cov = np.cov(X_retain.T) * 2
+    prior = GaussianPrior(mean_prior_mean=data_mean, mean_prior_cov=data_cov, dim=2, n_components=5)
+    
+    unlearner = BayesianUnlearning(prior=prior, lambda_hyper=2.0)
+    unlearner.fit(X_retain, X_forget, n_posterior_samples=50, n_components=5)
+    
+    bayesian_metrics = unlearner.evaluate(P_ideal, X_forget, n_samples=5000, compute_all_metrics=True)
+    
+    # Compare
+    compare_with_baselines(bayesian_metrics, baseline_results)
+    
+    return baseline_results, bayesian_metrics
 
 
 def compare_lambda_hyper_values():
@@ -193,7 +263,8 @@ def compare_lambda_hyper_values():
         result = run_unlearning_experiment(dataset_name='moons', 
                                           concept_type='spatial',
                                           lambda_hyper=lambda_hyper,
-                                          n_posterior_samples=40)
+                                          n_posterior_samples=40,
+                                          include_baselines=False)  # Skip baselines for speed
         results.append(result)
     
     # Extract metrics
@@ -265,23 +336,42 @@ def compare_lambda_hyper_values():
 
 
 if __name__ == "__main__":
+    import sys
+    
     # Run single experiment
     print("\n" + "🎯" * 40)
     print("BAYESIAN PAC UNLEARNING FRAMEWORK - DEMONSTRATION")
     print("🎯" * 40 + "\n")
     
-    # Experiment 1: Basic unlearning
-    result1 = run_unlearning_experiment(
-        dataset_name='moons',
-        concept_type='spatial',
-        lambda_hyper=2.0,
-        n_posterior_samples=50
-    )
+    # Check if user wants baseline comparison
+    run_baselines = '--baselines' in sys.argv or '-b' in sys.argv
+    run_lambda_sweep = '--lambda-sweep' in sys.argv or '-l' in sys.argv
     
-    # Experiment 2: Compare different forgetting strengths
-    print("\n\n")
-    compare_lambda_hyper_values()
+    if run_baselines:
+        # Experiment: Comprehensive baseline comparison
+        print("\n📊 Running comprehensive baseline comparison...\n")
+        run_baseline_comparison(dataset_name='moons', concept_type='spatial')
+    
+    elif run_lambda_sweep:
+        # Experiment: Compare different forgetting strengths
+        print("\n📈 Comparing different λ_hyper values...\n")
+        compare_lambda_hyper_values()
+    
+    else:
+        # Default: Basic unlearning experiment with baselines
+        print("\n💡 Running default experiment (use --baselines or --lambda-sweep for other modes)\n")
+        result1 = run_unlearning_experiment(
+            dataset_name='moons',
+            concept_type='spatial',
+            lambda_hyper=2.0,
+            n_posterior_samples=50,
+            include_baselines=True
+        )
     
     print("\n" + "✅" * 40)
     print("DEMONSTRATION COMPLETE!")
     print("✅" * 40 + "\n")
+    print("\nUsage:")
+    print("  python demo.py              # Default: single experiment with baselines")
+    print("  python demo.py --baselines  # Comprehensive baseline comparison")
+    print("  python demo.py --lambda-sweep # Compare different λ_hyper values")
